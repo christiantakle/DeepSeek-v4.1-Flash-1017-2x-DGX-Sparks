@@ -15,7 +15,7 @@
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.07-py3
 FROM ${BASE_IMAGE}
 # Optional ABLIT preparation uses the image's PyTorch and safetensors on CPU.
-RUN python3 -m pip install --no-cache-dir safetensors
+RUN python3 -m pip install --no-cache-dir safetensors==0.8.0
 ARG ZIG_VERSION
 ARG ZIG_SHA256
 # The compiler from the first of ZIG_MIRRORS (community mirrors: <base>/zig-aarch64-linux-<version>.tar.xz) that answers
