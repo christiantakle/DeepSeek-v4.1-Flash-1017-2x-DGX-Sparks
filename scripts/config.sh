@@ -85,8 +85,8 @@ INPUTS_REF="${INPUTS_REF:-59402086381a42c74d53053443224eec2790b4c5}"
 # and the image routing bias are made from the checkpoint.
 KIT_REPO="${KIT_REPO:-https://github.com/bertholomus/deepseek-v4.1-tensorfold-tp2-2xgb10.git}"
 KIT_REF="${KIT_REF:-abe07c7d509a0199cc7fec15263be2aa52ac652f}"
-ZIG_VERSION="${ZIG_VERSION:-0.17.0}"
-ZIG_SHA256="${ZIG_SHA256:-9e8d11661d4ae3bd57702a3832781e23ad151dde5798e16a5ccd503f65234ff8}"   # zig-aarch64-linux-0.17.0.tar.xz
+ZIG_VERSION="${ZIG_VERSION:-0.17.1}"
+ZIG_SHA256="${ZIG_SHA256:-a1546d5646eb184437918d6635ca6b762a0e889eac09cef720ee7a1ed3fe7795}"   # zig-aarch64-linux-0.17.1.tar.xz
 # Where zig/Dockerfile downloads the compiler: these community mirrors first (space-separated; each serves
 # <base>/zig-aarch64-linux-<version>.tar.xz), then ziglang.org, each with bounded retries, the first that serves
 # ZIG_SHA256 wins. Set but empty (ZIG_MIRRORS=): ziglang.org only. Not part of the image hash (the bytes are pinned).
