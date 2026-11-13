@@ -12,7 +12,7 @@
 # which both engines read) and the standalone make_token_map.py and make_rope.py.
 # Built by scripts/prepare.sh, never by hand: it passes the build arguments and a build context of this file and
 # zig/patches only.
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.07-py3@sha256:2140e699b3beaf7f96a0081fd9c9406bc3832b435cdb60dfa2d261f7d2f34a1c
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.10-py3@sha256:6d347d649d5dd108b4652f1b9cea6a3c859692ac408617a9108616da40e3da1f
 FROM ${BASE_IMAGE}
 # Optional ABLIT preparation uses the image's PyTorch and safetensors on CPU.
 RUN python3 -m pip install --no-cache-dir safetensors==0.8.0

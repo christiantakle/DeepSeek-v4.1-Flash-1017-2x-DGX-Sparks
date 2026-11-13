@@ -91,7 +91,7 @@ ZIG_SHA256="${ZIG_SHA256:-9e8d11661d4ae3bd57702a3832781e23ad151dde5798e16a5ccd50
 # <base>/zig-aarch64-linux-<version>.tar.xz), then ziglang.org, each with bounded retries, the first that serves
 # ZIG_SHA256 wins. Set but empty (ZIG_MIRRORS=): ziglang.org only. Not part of the image hash (the bytes are pinned).
 ZIG_MIRRORS="${ZIG_MIRRORS-https://zig.linus.dev/zig}"
-BASE_IMAGE="${BASE_IMAGE:-nvcr.io/nvidia/pytorch:26.07-py3@sha256:2140e699b3beaf7f96a0081fd9c9406bc3832b435cdb60dfa2d261f7d2f34a1c}"
+BASE_IMAGE="${BASE_IMAGE:-nvcr.io/nvidia/pytorch:26.10-py3@sha256:6d347d649d5dd108b4652f1b9cea6a3c859692ac408617a9108616da40e3da1f}"
 image_hash() {
   ( cd "$_cfg_root" || exit 1
     cat zig/patches/*.patch 2>/dev/null
