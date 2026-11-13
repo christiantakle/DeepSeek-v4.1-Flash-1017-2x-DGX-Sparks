@@ -2,7 +2,7 @@
 # fork, branch deepseek-v41-zig (TF_REPO at TF_REF), plus zig/patches/*.patch if there are any (git apply in the
 # checkout's root, filename order). The inputs checkout below gets zig/patches-inputs/*.patch the same way (the
 # mixed-pack rank-cache planner). It builds on NVIDIA's PyTorch container, which every Spark already holds: its CUDA
-# toolchain compiles the sm_121 fatbins, its NCCL 2.30.7, cuBLAS and libibverbs are what the engine loads at run time,
+# toolchain compiles the sm_121 fatbins, its NCCL, cuBLAS and libibverbs are what the engine loads at run time,
 # its PyTorch makes the kit's RoPE tables, and its Python with Pillow decodes the picture formats other than PNG (the
 # engine starts a python3 child for them). No GPU is needed to build.
 #
@@ -72,6 +72,9 @@ RUN cd /tf-inputs && /opt/zig/zig build -Dnvcc=/usr/local/cuda/bin/nvcc -Dsm=${S
        /opt/tensorfold/tools/inputs/ && \
     cp LICENSE /opt/tensorfold/share/doc/tensorfold/LICENSE-inputs-branch && \
     rm -rf /tf-inputs /opt/inputs /root/.cache/zig
+
+# Non-PNG vision input is decoded by an isolated Python child.
+RUN python3 -m pip install --no-cache-dir --only-binary=:all: Pillow==13.0.0
 
 ARG PATCHES_HASH
 LABEL tf.patches=${PATCHES_HASH} tf.engine=zig tf.ref=${TF_REF} tf.inputs=${INPUTS_REF}
