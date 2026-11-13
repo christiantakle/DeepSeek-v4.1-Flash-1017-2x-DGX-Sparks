@@ -46,7 +46,12 @@ RUN git init -q /tensorfold && cd /tensorfold && git remote add origin "${TF_REP
 COPY zig/patches /opt/tf-patches
 RUN cd /tensorfold && \
     for p in /opt/tf-patches/*.patch; do [ -e "$p" ] || continue; echo "applying $p"; git apply --check "$p" && git apply "$p" || exit 1; done
-RUN cd /tensorfold && /opt/zig/zig build -Dnvcc=/usr/local/cuda/bin/nvcc -Dsm=${SM} -Doptimize=ReleaseFast \
+# Align the checkout's strict compiler pin only for the verified patch release.
+RUN cd /tensorfold && \
+    if [ "$ZIG_VERSION" = 0.17.1 ]; then \
+      test "$(cat .zig-version)" = 0.17.0 && printf '0.17.1\n' > .zig-version; \
+    fi && \
+    /opt/zig/zig build -Dnvcc=/usr/local/cuda/bin/nvcc -Dsm=${SM} -Doptimize=ReleaseFast \
       --prefix /opt/tensorfold -j"$(nproc)" install native && \
     test -x /opt/tensorfold/native/bin/tensorfold-native && test -x /opt/tensorfold/bin/tf-dsv41-lanes && \
     mkdir -p /opt/tensorfold/share/doc/tensorfold && \
@@ -63,7 +68,12 @@ RUN git init -q /tf-inputs && cd /tf-inputs && git remote add origin "${TF_REPO}
 COPY zig/patches-inputs /opt/tf-inputs-patches
 RUN cd /tf-inputs && \
     for p in /opt/tf-inputs-patches/*.patch; do [ -e "$p" ] || continue; echo "applying $p"; git apply --check "$p" && git apply "$p" || exit 1; done
-RUN cd /tf-inputs && /opt/zig/zig build -Dnvcc=/usr/local/cuda/bin/nvcc -Dsm=${SM} -Doptimize=ReleaseFast \
+# Align the checkout's strict compiler pin only for the verified patch release.
+RUN cd /tf-inputs && \
+    if [ "$ZIG_VERSION" = 0.17.1 ]; then \
+      test "$(cat .zig-version)" = 0.17.0 && printf '0.17.1\n' > .zig-version; \
+    fi && \
+    /opt/zig/zig build -Dnvcc=/usr/local/cuda/bin/nvcc -Dsm=${SM} -Doptimize=ReleaseFast \
       --prefix /opt/inputs -j"$(nproc)" install && \
     test -x /opt/inputs/bin/tf-dsv41-rank-cache && \
     cp /opt/inputs/bin/tf-dsv41-rank-cache /opt/tensorfold/bin/ && \

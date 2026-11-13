@@ -14,6 +14,8 @@ serves the API and drives the rounds, rank 1 (`tf-dsv41-lanes`) follows. Credits
 | `tf-dsv41-rank-cache`, `make_token_map.py`, `make_rope.py`, `make_bias_vl.py` | the same fork's branch `deepseek-v41-zig-tp4`, commit `5940208` (`INPUTS_REF`); only these four files are kept |
 | the kernel kit (`TF_DS_KIT`, `TENSORFOLD_CUDA_KERNELS=<kit>/aot`) | not in the image: `kit/` of BertholomusAI's `deepseek-v4.1-tensorfold-tp2-2xgb10` at `abe07c7` (`KIT_REF`), fetched by `scripts/prepare.sh` into the Hugging Face cache and read by both ranks over NFS |
 
+For Zig 0.17.1, the Docker build asserts each checkout's original `.zig-version` is 0.17.0 and advances it to 0.17.1 before compilation. The existing strict compiler check remains intact. Explicit 0.17.0 version/SHA overrides retain the original source pin; other unverified compiler versions still fail that check.
+
 Pillow 13.0.0 is installed explicitly for the isolated Python child that decodes non-PNG image input.
 The NVIDIA base and safetensors version remain pinned.
 
