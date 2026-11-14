@@ -1,5 +1,5 @@
 {
-  description = "Optional aarch64-linux compiler experiment; not a TensorFold package";
+  description = "Optional aarch64-linux TensorFold compiler and native engine experiments";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -7,6 +7,9 @@
     let
       system = "aarch64-linux";
       pkgs = import nixpkgs { inherit system; };
+      # Opt-in engine only: CUDA's redistributables have NVIDIA licenses.
+      enginePkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
+      tensorfold-engine = import ./nix/tensorfold-engine.nix { pkgs = enginePkgs; };
       zig = pkgs.stdenvNoCC.mkDerivation rec {
         pname = "tensorfold-zig-bin";
         version = "0.17.1";
@@ -57,12 +60,18 @@
       };
     in {
       packages.${system} = {
-        inherit zig;
+        inherit zig tensorfold-engine;
+        tensorfold-engine-package = import ./nix/package-engine.nix {
+          inherit pkgs;
+          engine = tensorfold-engine;
+        };
         zig-nixpkgs = pkgs.zig_0_17;
         default = zig;
       };
       checks.${system} = {
         inherit zig;
+        # Keep flake checks lightweight; the full CUDA engine is opt-in.
+        tensorfold-sources = tensorfold-engine.sourceCheck;
         zig-libc = pkgs.runCommand "tensorfold-zig-libc-smoke" {
           nativeBuildInputs = [ pkgs.zig_0_17 pkgs.stdenv.cc ];
         } ''
