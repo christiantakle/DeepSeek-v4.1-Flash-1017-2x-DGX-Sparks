@@ -401,3 +401,51 @@ marker were restored on both nodes. The head supervisor is enabled/healthy with
 zero restart count at the final check. This experiment changes neither NixOS nor
 the host driver and is not a permanent service migration. Raw logs, addresses,
 weights and private configuration are excluded from this branch.
+
+
+## Matched runtime comparison (2026-11-14)
+
+A subsequent NVIDIA → Nix → NVIDIA run compared the complete runtime alternatives
+under the same production configuration: 524,288 context, shared1,572,864 pool,
+four streams, drafts on, read-ahead disabled and existing fill tuning/guards.
+Both images were already loaded on both hosts. Each phase restarted through the
+same supervisor, warmed with a separate128-token request, then used identical
+seed/salt/prompts. Filesystem caches were not purged. This compares differing
+compiler/library stacks as well as packaging; it cannot isolate an effect of Nix.
+
+| Metric | NVIDIA A1 / A2 | Nix B |
+| --- | --- | --- |
+| ~7.85k cold prompt, first token (s) | 3.334 /3.380 | 3.447 |
+| ~62.8k cold prompt, first token (s) | 26.108 /26.186 | 26.532 |
+| 287,455 cold prompt, first token (s) | 127.260 /127.727 | 128.031 |
+| Short-prompt single-stream decode (tokens/s) | 61.147 /61.145 | 59.877 |
+| Short-prompt four-stream aggregate (tokens/s) | 131.555 /131.441 | 131.650 |
+| Short-prompt first token (s) | 0.1647 /0.1654 | 0.1698 |
+| Service start → API health (s, ~2s polling) | 26.161 /28.158 | 26.151 |
+
+Short/medium prefill cells are medians of two requests; long prefill has one
+request per phase. Decode and concurrent cells are medians of three128-token
+runs. Four-stream measurement uses the shared first-to-last token window;
+per-stream rates do not simply sum to the aggregate. The first decode repetition
+was slower in all phases (48.6–55.7tokens/s), so these small samples do not prove
+a persistent2% single-stream regression. No statistical significance is claimed.
+Long-context decode and four simultaneous long histories were not measured here.
+
+All20 measured requests per phase reported zero cached tokens, expected output
+lengths and matching prompt/output token counts and full text hashes across
+A1/B/A2. Health-counter accounting matched precisely, with no other live requests.
+Both variants selected internal NCCL IB on both rails and logged GPUDirect
+RDMA disabled; the NVIDIA image loaded the Spectrum-X plugin but did not select
+it. Loaded-library maps confirmed each intended compatibility/CUDA/NCCL/verbs set.
+This establishes the observed selected path, not every optional transport mode.
+
+Minimum sampled MemAvailable head/worker was7.455/9.976GiB in A1,
+7.211/9.795GiB in B and7.212/9.757GiB in A2. Swap remained zero; no container OOM,
+selected kernel fault or selected memory-guard action was observed. GPU temperature
+snapshots ended at75–81°C; clocks were comparable, but continuous throttling and
+energy were not measured. Neither a RAM saving nor a speed gain is demonstrated.
+
+The useful measured difference remains the smaller declared serving closure/image;
+full preparation remains separate. The production NVIDIA image/configuration and
+prepared marker were restored and verified on both nodes, with the existing head
+supervisor enabled/healthy. The Nix path remains optional.
