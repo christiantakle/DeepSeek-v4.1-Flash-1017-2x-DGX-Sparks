@@ -4,9 +4,11 @@ This branch adds an `aarch64-linux` package for the same pinned, prebuilt
 Zig 0.17.1 archive used by Docker, plus access to the maintained Nixpkgs
 compiler and a libc integration check. An opt-in native TensorFold engine
 derivation now follows the recipe's two pinned checkouts and ordered patch sets.
-The engine derivation has built successfully on Linux ARM; it supplies no
-runtime wrapper, model, Python environment or serving deployment. It changes no
-serving scripts. There is no claimed inference speed gain.
+The engine derivation has built successfully on Linux ARM. A separate opt-in
+runtime candidate now declares GPU/RDMA libraries and an isolated Pillow decoder,
+with an optional Nix-built Docker image; their Linux build and a controlled two-node GPU serving test have passed. Neither package
+contains a model or serving deployment. Serving scripts remain unchanged.
+There is no claimed inference speed gain.
 
 `flake.lock` is copied unchanged from the private-labs Spark Nix experiment:
 nixpkgs `d4f25a3e562008648d45bcf2d70bcc7422cad84e`. The archive hash and
@@ -101,10 +103,9 @@ nix build 'path:.#packages.aarch64-linux.tensorfold-engine' --no-link --print-ou
 ```
 
 Keep the complete resulting Nix closure: the libc-linked executables are not
-standalone files for copying into the existing NVIDIA image. This candidate
-does not resolve their dynamically loaded CUDA, NCCL or RDMA libraries, package
-PyTorch/Pillow/safetensors, or validate inference. A runtime wrapper and actual
-two-rank validation remain separate work.
+standalone files for copying into the existing NVIDIA image. The engine package alone does not resolve dynamically loaded GPU/RDMA libraries
+or Python dependencies. The optional runtime and controlled serving validation
+below cover that separate integration boundary; preparation remains external.
 
 ## Optional executable packaging and diagnostics
 
@@ -139,7 +140,153 @@ The executable package still requires its complete Nix closure and does not
 provide a GPU runtime wrapper or the dynamically loaded CUDA/NCCL/RDMA libraries.
 It remains outside flake checks, so ordinary checks do not trigger an engine build.
 
-## Runtime integration still needed
+## Optional runtime candidate
+
+`packages.aarch64-linux.tensorfold-runtime` wraps the existing stripped package;
+it does not rebuild TensorFold. Its `bin/tensorfold-native` and
+`bin/tf-dsv41-lanes` execute the packaged head and worker executables with the
+same declared library path and Python first on `PATH`.
+The runtime has a separate Nixpkgs import with scoped `allowUnfree` and
+`enableCudaDriverCompat = true`; the latter is required by this lock's
+`cuda_compat` recipe. This import also selects `cudaCapabilities = [ "12.1" ]`
+for GB10. CUDA 13.4's locked supported-capability list includes 12.1, and the
+maintained recipes pass
+`-gencode=arch=compute_121,code=sm_121 -gencode=arch=compute_121,code=compute_121`
+to source-built NCCL/GDRCopy. Nixpkgs' default `cudaForwardCompat = true` retains
+the latter PTX target; this setting is separate from selecting the compatibility
+driver. The tested engine's import, explicit SM121 build and derivation remain unchanged.
+The runtime and decoder check are optional packages, outside the default package
+and flake checks.
+
+| Locked attribute | Version |
+| --- | --- |
+| `cudaPackages_13_4.cuda_compat` | 615.71.10 |
+| `cudaPackages_13_4.libcublas` | 13.8.2.12 |
+| `cudaPackages_13_4.nccl` | 2.32.6-1 |
+| `cudaPackages_13_4.gdrcopy` (NCCL dependency) | 2.6 |
+| `rdma-core` | 65.0 |
+| `python3` | 3.14.10 |
+| `python3Packages.pillow` | 13.0.0 |
+
+These attributes and derivations evaluate on macOS; evaluation alone establishes
+neither Linux substitutability nor a complete working runtime. The Linux dry run
+requires source builds of NCCL and its GDRCopy userspace dependency; the scoped
+capability setting avoids compiling kernels for the full default GPU set.
+The maintained GDRCopy recipe builds only `lib` and `exes`; upstream `install`
+installs those userspace components, while `drv_install` is a separate target.
+No `gdrdrv` kernel module is built or installed. Its hardware tests are disabled
+because they require an existing host module. This does not establish GDRCopy
+availability or operation on the host.
+The Linux runtime and image built successfully, including source-built NCCL
+and GDRCopy userspace. See the controlled qualification below for scope.
+The running Docker image was inspected with Python 3.12.3 and Pillow 13.0.0;
+the pinned engine's comment naming Pillow 12.3.0 is stale. Python changes version,
+and the CUDA/collectives versions differ from the running image as detailed below.
+
+The wrapper replaces inherited `LD_LIBRARY_PATH`: forward-compat `libcuda` comes
+first, followed by cuBLAS (including Lt), NCCL and rdma-core. It never selects a
+host `libcuda` as an implicit replacement. rdma-core 65 discovers providers through
+its compiled Nix-store provider/config paths; the wrapper exports no unused
+`IBV_DRIVERS_PATH` override. Its mlx5
+provider and config are checked for existence. Host modules, GPU/RDMA devices,
+udev permissions and kernel compatibility remain prerequisites outside Nix.
+
+The HPC-X Spectrum-X NCCL plugin is not packaged. An explicitly selected external
+plugin can be supplied using `TF_NCCL_PLUGIN_DIR`; this directory is appended
+after the declared libraries. `TF_RUNTIME_EXTRA_LIBRARY_PATH` appends deliberate
+external dependency paths, including deliberately exposed host NVML on this non-NixOS host.
+Existing `NCCL_*` settings pass through, including `NCCL_NET_PLUGIN` selection.
+External paths are outside the derivation and closure and must be qualified for
+the selected NCCL/verbs ABI. Do not infer equivalent Spectrum-X, GPUDirect,
+mlx5-provider or transport behavior from installing rdma-core or loading a DSO.
+
+The engine's pinned [`pil.zig`](https://github.com/bertholomus/TensorFold/blob/fbbc97132cd004237d9887b8d3185896efaedc5c/zig/src/families/dsv41/pil.zig)
+launches exactly `python3 -I -c SCRIPT` for non-PNG images. The runtime uses the
+locked Python `withPackages` environment and checks it under `-I`, including a
+second isolated child decoding a tiny BMP. The independent decoder check passed
+on Linux ARM with Python 3.14.10/Pillow 13.0.0; merely setting `PYTHONPATH` is
+insufficient under isolated mode. `tensorfold-runtime-check`
+runs the same CPU check after installation. The install check also validates
+required library/provider files and runs `capabilities --json`; capabilities may attempt `cuInit` and report no device in the sandbox. This
+install check does not establish GPU initialization or load a model. Run on an `aarch64-linux` builder:
+
+```sh
+# Decoder only; does not realize the engine or GPU libraries.
+nix build 'path:.#packages.aarch64-linux.tensorfold-runtime-python-check' --no-link --print-out-paths -L
+# Explicitly opt into the larger runtime dependency closure.
+nix build 'path:.#packages.aarch64-linux.tensorfold-runtime' --no-link --print-out-paths -L
+runtime=$(nix path-info 'path:.#packages.aarch64-linux.tensorfold-runtime')
+"$runtime/bin/tensorfold-runtime-check"
+"$runtime/bin/tensorfold-native" capabilities --json
+nix path-info -S 'path:.#packages.aarch64-linux.tensorfold-runtime'
+```
+
+Model weights, validated rank-cache/kit files, network addresses, RDMA tuning and
+two-rank service orchestration stay in the existing external/private configuration.
+For the first serving qualification, reuse the already validated rank caches and
+kit; provide their existing host paths as engine arguments. This candidate does
+not replace `start.sh`, activate a profile or change the production Docker service.
+PyTorch/safetensors preparation remains a separate existing Docker preparation
+path (`scripts/prepare.sh` and `zig/Dockerfile`); it is not needed to reuse those
+prepared artifacts and is not included in this runtime. GPU initialization and two-rank inference were tested separately after the CPU
+packaging checks; the results and transport limits are recorded below.
+
+## Optional Nix-built Docker image
+
+`packages.aarch64-linux.tensorfold-runtime-image` uses
+`dockerTools.buildLayeredImage` to produce `tensorfold-dsv41-nix:sm121-test`,
+an ARM64 Docker-loadable image archive. Nix builds the filesystem and captures
+its Nix-store runtime closure; Docker still runs the containers, provides the
+existing NFS mounts and applies the existing orchestration and memory guards.
+This is not a NixOS migration. The image has no NVIDIA base image, VM build phase,
+`runAsRoot`, model data, private environment file or node-specific networking.
+The locked layered-image API names its prepared root input `contents`;
+`copyToRoot` is the separate `buildImage` API.
+
+The image puts the head and worker wrappers first on `PATH`, followed by isolated
+Python and the remaining engine tools. `/opt/tensorfold` points to the complete
+packaged engine tree, including preparation scripts and notices. Bash, coreutils
+and findutils support the launcher's existing utility and spill-cleanup commands.
+`/tmp` is writable with the usual sticky permissions. There is no entrypoint;
+the launcher can append `tensorfold-native ...` or `tf-dsv41-lanes ...` directly.
+The default command prints capabilities. `NVIDIA_VISIBLE_DEVICES=all` and
+`NVIDIA_DRIVER_CAPABILITIES=compute,utility` request the existing NVIDIA runtime's
+device/library injection; the wrappers still put the selected Nix compatibility
+driver before external library paths.
+
+Image labels record `tf.engine=zig`, `tf.ref`, `tf.inputs`, the locked Nixpkgs
+revision and actual Nix engine/runtime paths and runtime derivation. They do not
+invent a Dockerfile-derived `tf.patches` identity. If spill is enabled, the
+existing launcher falls back to the Docker recipe hash when that label is absent;
+qualification must supply distinct `TF_DS_RECIPE_PATCHES`/`TF_DS_ENGINE_ID`
+identities for this Nix candidate or use a fresh disabled spill configuration.
+Prepared rank caches and kit files are reused externally. CPU PyTorch preparation
+continues through the validated existing image, since this candidate supplies no
+PyTorch or safetensors environment.
+
+After the runtime package passes Linux checks, build and inspect the optional
+archive separately; loading it does not start a container:
+
+```sh
+nix build 'path:.#packages.aarch64-linux.tensorfold-runtime-image' --no-link --print-out-paths -L
+archive=$(nix path-info 'path:.#packages.aarch64-linux.tensorfold-runtime-image')
+docker load -i "$archive"
+docker image inspect tensorfold-dsv41-nix:sm121-test
+docker run --rm --network none tensorfold-dsv41-nix:sm121-test
+docker run --rm --network none --entrypoint tensorfold-runtime-check tensorfold-dsv41-nix:sm121-test
+```
+
+The existing head supervisor can temporarily select that loaded image on both
+nodes with preparation disabled for a separate controlled qualification, retaining
+its normal mounts and two-rank command construction. The Nix package does not
+modify `start.sh` or select an image for the service. External NCCL plugins and
+host libraries require explicit container mounts and the runtime variables above.
+Host-injected utilities such as `nvidia-smi` may depend on a distribution loader
+absent from this minimal root; inspect the host directly for those diagnostics.
+Neither image evaluation nor CPU capabilities establish GPU initialization,
+two-rank transport or inference correctness.
+
+## Runtime integration boundary
 
 The pinned [TensorFold CUDA build](https://github.com/bertholomus/TensorFold/blob/fbbc97132cd004237d9887b8d3185896efaedc5c/zig/build/cuda.zig)
 invokes `nvcc -fatbin`, records `nvcc --version` as an input and uses SASS
@@ -161,11 +308,9 @@ driver userspace library comes from `/usr/local/cuda-13.4/compat/lib.real/`
 (`615.71.09`) while the host kernel module is `580.178.04`. Replacing that
 compatibility arrangement with a host library is a separate compatibility test.
 
-A future runtime wrapper must deliberately resolve these libraries and their
-transitive dependencies/providers, retain access to the host GPU and RDMA
-devices, and validate the actual two-rank path. A Nix store closure alone does
-not provide a CUDA driver, kernel modules or devices. Keep the current image
-available until that integration has been tested independently.
+The controlled host test below exercised these dependencies and the two-rank
+path. A Nix closure alone supplies neither host kernel modules nor devices.
+The current NVIDIA image remains available and is the restored production image.
 
 The existing Docker build also uses PyTorch for CPU RoPE-table preparation;
 optional ABLIT preparation uses PyTorch and safetensors. Non-PNG input starts a
@@ -185,7 +330,7 @@ sufficient for a sandboxed, libc-linked TensorFold build.
 
 The locked `cudaPackages_13_4` evaluates for Linux ARM and x86 Linux. The engine build
 realized NVCC13.4.92 and its cudart/CRT/CCCL header dependencies in the Nix
-store. Remaining runtime versions were inspected only: cuBLAS13.8.2.12,
+store. The separately built and tested runtime uses cuBLAS13.8.2.12,
 NCCL2.32.6-1, cuda-compat615.71.10 and rdma-core65.0.
 The running NVIDIA image instead loads cuBLAS13.8.1.7, NCCL2.32.3 and
 cuda-compat615.71.09. Choosing the maintained Nix CUDA set would therefore
@@ -206,5 +351,53 @@ Full engine compilation paused inference through the existing head supervisor;
 normal source/image/configuration were restored afterward. Packaging-only
 checks ran with the normal model healthy. No Nix profile activation, host
 package or kernel-driver replacement, model/kit change or service migration
-was performed. Full scoped flake checks pass; runtime inference/RDMA, image
-features and preparation under a Nix wrapper remain unqualified.
+was performed. Full scoped flake checks pass. The independent isolated Python
+decoder check passed on Linux ARM. The runtime and image also built on Linux ARM and passed the controlled serving
+test below. Preparation and optional modes remain outside that qualification.
+
+
+## Controlled two-node runtime qualification (2026-11-14)
+
+The runtime uses Python 3.14.10/Pillow 13.0.0 under `-I`; all ten decoder/protocol
+fixtures matched the existing image. The optional OCI image built to
+1,750,621,523 Docker-reported bytes, compared with 25,278,792,693 for the existing
+full NVIDIA image. This smaller serving image excludes PyTorch/safetensors
+preparation, model data and builder caches; it is not a like-for-like preparation
+image or an inference speedup claim.
+
+Nix glibc does not use the distribution's `ld.so.cache`. The NVIDIA container
+hook injects host-matched NVML at `/usr/lib/aarch64-linux-gnu/libnvidia-ml.so.1`
+on the tested ARM64 hosts. The image exposes only that DSO through a symlink in
+`/run/nvidia-driver/lib`, appended through `TF_RUNTIME_EXTRA_LIBRARY_PATH`.
+It does not add the host's whole libc directory. The declared compatibility
+`libcuda` remains first. Both containers passed an explicit CUDA initialization,
+GB10/SM121 device query, NCCL version query, NVML initialization/driver query and
+four-device verbs enumeration. Host kernel driver remained 580.178.04.
+
+The existing head supervisor temporarily ran this identical image on both ranks,
+reusing the validated prepared artifacts (`PREPARE=0`). Tests used upstream
+1M context/shared pool, four streams, drafts enabled, default read-ahead and no
+fill overrides. Spill and KV sharding were disabled. The retained greedy baseline
+was reused: **31/31 exact prompt/token/full-text matches**, with no request errors
+or failed checks. JPEG/WebP/GIF vision checks all passed. A separate cold
+298,533-token retrieval prompt answered correctly; prefill was 137.936 seconds
+and total request time 139.3 seconds. These are individual samples, not a matched
+performance comparison with the existing runtime.
+
+Across 172 candidate-phase samples at roughly two-second intervals, minimum
+MemAvailable was 6.787/9.302 GiB, swap usage zero. Neither container reported an
+OOM; cursor-scoped kernel logs through restoration had no selected fault-pattern
+matches. This is scoped evidence, not exhaustive stress or outage qualification.
+
+NCCL selected its internal **NET/IB** provider on both rails after finding no
+optional `libnccl-net.so`. Its logs explicitly reported **GPUDirect RDMA disabled**.
+The existing HPC-X Spectrum-X plugin is absent. Transport/performance equivalence,
+external plugins, durable spill identity, optional modes and full preparation
+remain separate work. The existing launcher does not forward arbitrary wrapper
+variables or mount external plugin directories automatically.
+
+The original NVIDIA image, byte-identical private configuration and prepared
+marker were restored on both nodes. The head supervisor is enabled/healthy with
+zero restart count at the final check. This experiment changes neither NixOS nor
+the host driver and is not a permanent service migration. Raw logs, addresses,
+weights and private configuration are excluded from this branch.

@@ -9,7 +9,33 @@
       pkgs = import nixpkgs { inherit system; };
       # Opt-in engine only: CUDA's redistributables have NVIDIA licenses.
       enginePkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
+      # Separate import: selecting driver compatibility must not change the tested
+      # engine/header derivation. These permissions apply only to opt-in outputs.
+      runtimePkgs = import nixpkgs {
+        inherit system;
+        config = {
+          allowUnfree = true;
+          enableCudaDriverCompat = true;
+          # Limit source-built NCCL/GDRCopy device code to the Spark's GB10.
+          cudaCapabilities = [ "12.1" ];
+        };
+      };
       tensorfold-engine = import ./nix/tensorfold-engine.nix { pkgs = enginePkgs; };
+      tensorfold-engine-package = import ./nix/package-engine.nix {
+        inherit pkgs;
+        engine = tensorfold-engine;
+      };
+      tensorfold-runtime = import ./nix/runtime.nix {
+        pkgs = runtimePkgs;
+        engine = tensorfold-engine-package;
+      };
+      tensorfold-runtime-image = import ./nix/runtime-image.nix {
+        inherit pkgs;
+        engine = tensorfold-engine-package;
+        runtime = tensorfold-runtime;
+        inherit (tensorfold-engine) engineRef inputsRef;
+        nixpkgsRef = nixpkgs.rev;
+      };
       zig = pkgs.stdenvNoCC.mkDerivation rec {
         pname = "tensorfold-zig-bin";
         version = "0.17.1";
@@ -60,11 +86,9 @@
       };
     in {
       packages.${system} = {
-        inherit zig tensorfold-engine;
-        tensorfold-engine-package = import ./nix/package-engine.nix {
-          inherit pkgs;
-          engine = tensorfold-engine;
-        };
+        inherit zig tensorfold-engine tensorfold-engine-package tensorfold-runtime tensorfold-runtime-image;
+        # Test the decoder without realizing the engine or CUDA runtime closure.
+        tensorfold-runtime-python-check = tensorfold-runtime.pythonCheck;
         zig-nixpkgs = pkgs.zig_0_17;
         default = zig;
       };
